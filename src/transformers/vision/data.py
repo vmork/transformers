@@ -11,11 +11,6 @@ class CIFARBatch(Batch):
     x: Float[Tensor, "B 3 32 32"]
     y: Int[Tensor, "B"]
 
-@dataclass 
-class CIFAROutput(ModelOutput):
-    loss: Float[Tensor, ""]
-    logits: Float[Tensor, "B C"]
-
 class CIFARDataLoader(DataLoader):
     def __init__(self, dataset: Dataset, batch_size: int, shuffle: bool, **kwargs):
         super().__init__(dataset, batch_size=batch_size, shuffle=shuffle, **kwargs)

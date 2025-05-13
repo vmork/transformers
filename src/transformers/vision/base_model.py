@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from jaxtyping import Float 
 import torch
 import torch.nn as nn
@@ -6,31 +7,37 @@ import numpy as np
 from matplotlib import pyplot as plt
 from torch import Tensor
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, f1_score
+from tqdm import tqdm
 
-from transformers.utils import Model
-from transformers.vision.data import CIFAROutput, CIFARDataLoader, CIFARBatch
+from transformers.utils import Model, ModelOutput
+from transformers.vision.data import CIFARDataLoader, CIFARBatch
+
+@dataclass 
+class VisionModelOutput(ModelOutput):
+    loss: Float[Tensor, ""]
+    logits: Float[Tensor, "B C"]
 
 class VisionModel(Model):
     def __init__(self, n_classes: int=10):
         super().__init__()
 
-    def get_output(self, batch: CIFARBatch) -> CIFAROutput: # type: ignore
+    def get_output(self, batch: CIFARBatch) -> VisionModelOutput: # type: ignore
         logits = self.forward(batch.x)
         loss = F.cross_entropy(logits, batch.y)
-        return CIFAROutput(loss=loss, logits=logits)
+        return VisionModelOutput(loss=loss, logits=logits)
 
     def predict(self, x: Float[Tensor, "B 3 32 32"]):
         logits = self.forward(x)
         return logits.argmax(dim=-1)
 
-    def full_eval(self, test_loader: CIFARDataLoader, device: torch.device, idx_to_class: dict[int, str], plot=True):
+    def full_eval(self, test_loader: CIFARDataLoader, device: torch.device, idx_to_class: dict[int, str], verbose=True):
         self.eval()
         self.to(device)
         all_preds = []
         all_labels = []
 
         with torch.no_grad():
-            for batch in test_loader:
+            for batch in tqdm(test_loader, disable=(not verbose)):
                 batch: CIFARBatch = batch.to(device)  # type: ignore
                 preds = self.predict(batch.x)
                 labels = batch.y
@@ -43,7 +50,7 @@ class VisionModel(Model):
         accuracy = (all_preds == all_labels).mean()
         f1 = f1_score(all_labels, all_preds, average='macro')
 
-        if plot:
+        if verbose:
             cm = confusion_matrix(all_labels, all_preds)
             display_labels = [idx_to_class[idx] for idx in range(10)]
             disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=display_labels)

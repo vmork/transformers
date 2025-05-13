@@ -6,35 +6,27 @@ from jaxtyping import Float, Int
 from transformers.utils import Model
 
 class TransformerEncoder(Model):
-    def __init__(self, n_vocab=30522, n_layers=12, n_head=12, n_ctx=512, d_emb=768, d_head=64, d_mlp=3072, p_dropout=0.1, masked_attention=False):
+    def __init__(self, n_layers=12, n_head=12, d_emb=768, d_head=64, d_mlp=3072, p_dropout=0.1, masked_attention=False):
         super().__init__()
         assert d_head*n_head == d_emb, "Require d_head*n_head == d_emb"
-        self.tok_emb = nn.Embedding(n_vocab, d_emb)
-        self.pos_emb = nn.Embedding(n_ctx, d_emb)
-        self.dropout = nn.Dropout(p_dropout)
         self.blocks = nn.ModuleList([
-            TransformerBlock(n_ctx=n_ctx, n_head=n_head, d_emb=d_emb, d_mlp=d_mlp, d_head=d_head, p_dropout=p_dropout, masked_attention=masked_attention)
+            TransformerBlock(n_head=n_head, d_emb=d_emb, d_mlp=d_mlp, d_head=d_head, p_dropout=p_dropout, masked_attention=masked_attention)
             for _ in range(n_layers)
         ])
         self.ln_final = nn.LayerNorm(d_emb)
     
-    def forward(self, x: Int[Tensor, "B T"]) -> Float[Tensor, "B T d_emb"]:
-        B, T = x.shape
-        xe = self.tok_emb(x) # [B, T, d_emb]
-        xp = self.pos_emb(torch.arange(0, T)) # [T, d_emb]
-        x = xe + xp # [B, T, d_emb]
-        x = self.dropout(x)
+    def forward(self, x: Float[Tensor, "B T d_emb"]) -> Float[Tensor, "B T d_emb"]:
         for block in self.blocks:
             x = block(x)
         return self.ln_final(x)
     
 class TransformerBlock(nn.Module):
-    def __init__(self, n_ctx, n_head, d_emb, d_mlp, d_head, p_dropout, masked_attention=False):
+    def __init__(self, n_head, d_emb, d_mlp, d_head, p_dropout, masked_attention=False):
         super().__init__()
-        self.attn = EfficientMultiHeadAttention(n_ctx=n_ctx, n_head=n_head, d_emb=d_emb, d_head=d_head, p_dropout=p_dropout, masked_attention=masked_attention)
-        self.mlp = MLP(d_emb=d_emb, d_mlp=d_mlp, p_dropout=p_dropout)
         self.ln1 = nn.LayerNorm(d_emb)
+        self.attn = EfficientMultiHeadAttention(n_head=n_head, d_emb=d_emb, d_head=d_head, p_dropout=p_dropout, masked_attention=masked_attention)
         self.ln2 = nn.LayerNorm(d_emb)
+        self.mlp = MLP(d_emb=d_emb, d_mlp=d_mlp, p_dropout=p_dropout)
         
     def forward(self, x: Float[Tensor, "B T d_emb"]) -> Float[Tensor, "B T d_emb"]:
         # pre-norm formulation
@@ -83,7 +75,7 @@ class AttentionHead(nn.Module):
 
 class EfficientMultiHeadAttention(nn.Module):
     # Do everything at the same time!
-    def __init__(self, n_ctx, n_head, d_emb, d_head, p_dropout, masked_attention=False):
+    def __init__(self, n_head, d_emb, d_head, p_dropout, masked_attention=False):
         super().__init__()
         self.n_head, self.d_head, self.masked_attention = n_head, d_head, masked_attention
         # q,k,v matrices for all heads, stacked along last dim
@@ -91,8 +83,6 @@ class EfficientMultiHeadAttention(nn.Module):
         self.wo = nn.Linear(d_emb, d_emb)
         self.dropout_attn = nn.Dropout(p_dropout)
         self.dropout_resid = nn.Dropout(p_dropout)
-        if masked_attention:
-            self.register_buffer('mask', torch.tril(torch.ones((1, 1, n_ctx, n_ctx))))
     
     def forward(self, x: Float[Tensor, "B T d_emb"]) -> Float[Tensor, "B T d_emb"]:
         B, T, d_emb = x.shape
@@ -107,7 +97,9 @@ class EfficientMultiHeadAttention(nn.Module):
         
         A = (q @ k.transpose(-1, -2)) / self.d_head**0.5 # [B, n_head, T, T]
         if self.masked_attention:
-            A = torch.masked_fill(A, self.mask[:, :, :T, :T] == 0, float('-inf')) # type: ignore
+            mask = torch.tril(torch.ones((1, 1, T, T), device=x.device, dtype=torch.bool))
+            A = A.masked_fill(~mask, float('-inf')) 
+        A = A - A.amax(dim=-1, keepdim=True)  # subtract max for stability
         A = F.softmax(A, dim=-1)
         A = self.dropout_attn(A)
         

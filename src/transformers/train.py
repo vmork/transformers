@@ -132,7 +132,7 @@ class Trainer:
       names: list[str] = list(self.metrics.values[0].keys())
       for name in names:
         plt.plot(self.metrics.steps, [ms[name] for ms in self.metrics.values], label=name)
-    plt.legend(); plt.xlabel("steps"); plt.show()
+      plt.legend(); plt.xlabel("steps"); plt.show()
 
   @torch.no_grad()
   def eval(self, data_loader: DataLoader|None=None, verbose=True, max_batches:int|None=None):
